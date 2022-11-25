@@ -1,0 +1,5 @@
+sepvvtspdb-et21 192.168.0.178 primary
+sepvvtspdb-et22 192.168.0.179  
+sepvvtsmdb-et21 192.168.0.168 primary
+sepvvtsmdb-et22 192.168.0.169  
+sepvvts-loki 192.168.0.59 primary

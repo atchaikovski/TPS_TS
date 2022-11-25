@@ -1,0 +1,15 @@
+sepvvts-loki 172.17.42.59 primary
+sepvvtsing-et21 172.17.42.76 primary
+sepvvtsing-et22 172.17.42.77  
+sepvvtsm-et21 172.17.42.71 primary
+sepvvtsm-et22 172.17.42.72  
+sepvvtsm-et23 172.17.42.73 
+sepvvtssys-et21 172.17.42.74 primary
+sepvvtssys-et22 172.17.42.75  
+sepvvtsasw-et21 172.17.42.81 primary
+sepvvtsasw-et22 172.17.42.82  
+sepvvtsasw-et23 172.17.42.83 
+sepvvtspdb-et21 172.17.42.78 primary
+sepvvtspdb-et22 172.17.42.79  
+sepvvtsmdb-et21 172.17.42.68 primary
+sepvvtsmdb-et22 172.17.42.69  

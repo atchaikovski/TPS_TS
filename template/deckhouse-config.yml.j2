@@ -1,0 +1,28 @@
+apiVersion: deckhouse.io/v1
+kind: ClusterConfiguration
+clusterType: Static
+podSubnetCIDR: 10.111.0.0/16
+serviceSubnetCIDR: 10.222.0.0/16
+kubernetesVersion: "{{k8s_version}}"
+clusterDomain: "cluster.local"
+---
+apiVersion: deckhouse.io/v1
+kind: InitConfiguration
+deckhouse:
+  imagesRepo: registry.deckhouse.io/deckhouse/ee
+  ### !!! replace with auto-generated content
+  registryDockerCfg: eyJhdXRocyI6IHsgInJlZ2lzdHJ5LmRlY2tob3VzZS5pbyI6IHsgInVzZXJuYW1lIjogImxpY2Vuc2UtdG9rZW4iLCAicGFzc3dvcmQiOiAiQjlMeTU4TWl5TUxIS2FWRXhhNUFWTnd6MW1NRUNRTk4iLCAiYXV0aCI6ICJiR2xqWlc1elpTMTBiMnRsYmpwQ09VeDVOVGhOYVhsTlRFaExZVlpGZUdFMVFWWk9kM294YlUxRlExRk9UZz09In19fQ==
+  releaseChannel: Stable
+  configOverrides:
+    global:
+      modules:
+        publicDomainTemplate: {{deckhouse_public_domain}}
+    cniFlannelEnabled: true
+    cniFlannel:
+      podNetworkMode: VXLAN
+
+---
+apiVersion: deckhouse.io/v1
+kind: StaticClusterConfiguration
+internalNetworkCIDRs:
+- {{deckhouse_net_cidr}}/24

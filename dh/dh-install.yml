@@ -1,0 +1,16 @@
+---
+
+#
+# Начальная установка Deckhouse на ВМ (1 master сервер)
+#
+
+- hosts: "master"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+

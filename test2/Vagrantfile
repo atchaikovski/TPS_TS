@@ -1,0 +1,44 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# default constants
+CONFIGFILE_HOSTS = './hosts-h'
+VAGRANT_BOX = 'dummy.box'
+
+# build hosts hash
+hosts = {} 
+File.readlines(CONFIGFILE_HOSTS).map(&:chomp).each do |line|
+  hostname,ipaddr = line.split(/\s+/)             # only grab first two columns
+  hosts[hostname] = ipaddr                         # store in hash
+  PRIMARY_SYSTEM = hostname if (line =~ /primary/) # match primary
+end
+
+Vagrant.configure('2') do |config|
+    config.ssh.username = 'devops'
+    config.ssh.forward_agent = true
+    config.ssh.private_key_path = '~/.ssh/id_rsa'
+    config.vm.synced_folder ".", "/vagrant", disabled: true
+  
+    hosts.each do |hostname, ipaddr|
+    default = if hostname == PRIMARY_SYSTEM then true else false end
+    config.vm.define hostname, primary: default do |node|
+      node.vm.box = VAGRANT_BOX
+      node.vm.hostname = hostname
+      node.vm.network 'private_network', ip: ipaddr
+      node.vm.provider('vsphere') { |vbox| vbox.name = "#{hostname}" }
+    end
+  end
+
+  config.vm.provider :vsphere do |vsphere|
+    vsphere.host = 'vcsa'
+    vsphere.compute_resource_name = ENV['VCLUSTER']
+    #vsphere.resource_pool_name = ''
+    vsphere.vm_base_path = ENV['BASE_PATH']
+    vsphere.customization_spec_name = ENV['SPEC']
+    vsphere.linked_clone = true
+    vsphere.template_name = ENV['TEMPLATE']
+    vsphere.user = ENV['VUSER']
+    vsphere.password = ENV['VPASS']
+    vsphere.insecure = true
+  end
+end

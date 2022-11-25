@@ -1,0 +1,16 @@
+
+- hosts: "*"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+
+    - name:  include vars
+      include_vars: vars/main.yml
+
+    - name: adjust sshd config
+      shell: sed -i '/UsePAM/ s/yes/no/' {{ sshd_config }}

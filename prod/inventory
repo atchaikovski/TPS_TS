@@ -1,0 +1,51 @@
+[ingress]
+sepvvtsing-et01 ansible_host=172.17.32.176
+sepvvtsing-et02 ansible_host=172.17.32.177
+
+[masters]
+sepvvtsm-et01 ansible_host=172.17.32.171
+sepvvtsm-et02 ansible_host=172.17.32.172
+sepvvtsm-et03 ansible_host=172.17.32.173
+
+[system]
+sepvvtssys-et01 ansible_host=172.17.32.174
+sepvvtssys-et02 ansible_host=172.17.32.175
+
+[workers]
+sepvvtsasw-et01 ansible_host=172.17.32.181
+sepvvtsasw-et02 ansible_host=172.17.32.182
+sepvvtsasw-et03 ansible_host=172.17.32.183
+
+[postgres]
+sepvvtspdb01 ansible_host=172.17.32.78
+#sepvvtspdb02 ansible_host=172.17.32.79
+sepvvtsadb ansible_host=10.127.128.80
+
+[bitrix]
+sepvvtswb01 ansible_host=172.17.32.61
+sepvvtswb02 ansible_host=172.17.32.62
+
+[mariadb]
+sepvvtsmdb01 ansible_host=172.17.32.68
+sepvvtsmdb02 ansible_host=172.17.32.69 
+
+[loki]
+sepbbtsadb ansible_host=10.127.128.80
+
+[deckhouse:children]
+masters
+workers
+ingress
+system
+
+[db:children]
+postgres
+mariadb
+
+[postgres:vars]
+primary=sepvvtspdb01
+primary_ip=172.17.32.78
+
+[mariadb:vars]
+primary=sepvvtsmdb01
+primary_ip=172.17.32.68

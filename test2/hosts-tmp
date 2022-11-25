@@ -1,0 +1,16 @@
+
+sepvvts-loki 192.168.0.59 primary
+sepvvtsing-et21 192.168.0.176 primary
+sepvvtsing-et22 192.168.0.177  
+sepvvtsm-et21 192.168.0.171 primary
+sepvvtsm-et22 192.168.0.172  
+sepvvtsm-et23 192.168.0.173 
+sepvvtssys-et21 192.168.0.174 primary
+sepvvtssys-et22 192.168.0.175  
+sepvvtsasw-et21 192.168.0.181 primary
+sepvvtsasw-et22 192.168.0.182  
+sepvvtsasw-et23 192.168.0.183 
+sepvvtsmdb-et21 192.168.0.168 primary
+sepvvtsmdb-et22 192.168.0.169  
+sepvvtswb-et21 192.168.0.161 primary
+sepvvtswb-et22 192.168.0.162

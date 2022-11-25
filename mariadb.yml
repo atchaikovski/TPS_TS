@@ -1,0 +1,220 @@
+---
+
+#
+# Начальная установка MariaDB на ВМ (2 сервера), репликация между ними  
+# НЕ ГОТОВО: 
+# 1. подключение БД к AD. 
+#
+
+- hosts: "mariadb"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+  vars:
+    non_master_hosts:  "{{ groups['mariadb']|map('extract',hostvars,['ansible_host'])|list|difference(primary_ip)}}"
+
+  tasks:
+
+    - name: mariadb - check if data dir is there
+      stat: 
+        path: '{{mariadb_data_dir}}'
+      register: data_dir_check
+
+    - name: mariadb - create data dir if not there
+      file: 
+        path: '{{mariadb_data_dir}}'
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: 0750
+      when: data_dir_check.stat.exists != true
+
+    - name: 
+      find:
+        paths: '{{mariadb_data_dir}}'
+        file_type: directory
+        hidden: true
+      register: out
+
+    - name: mariadb - add disk (shell)
+      shell: |
+        pvcreate {{data_disk_name}}
+        vgcreate {{data_vol_name}} {{data_disk_name}}
+        lvcreate -l 100%FREE -n {{data_lvol_name}} {{data_vol_name}} -y
+        mkfs.ext4 /dev/{{data_vol_name}}/{{data_lvol_name}}
+        mount /dev/{{data_vol_name}}/{{data_lvol_name}} {{mariadb_data_dir}}
+        chown -R postgres:postgres {{mariadb_data_dir}}
+      when: out.matched == 0
+
+
+    - name: mariadb - add packages
+      apt: 
+        pkg:
+          - mariadb-server
+          - mariadb-client
+        state: present
+
+### Master - раскомментируем и меняем параметры конфиг файла
+  
+    - name: mariadb - All servers add option to config file
+      lineinfile:
+        dest: '{{ mariadb_config }}'
+        insertafter: '^\[mariadb\]'
+        line: "innodb_strict_mode=OFF"
+        
+    - name: mariadb - All servers add lines to promtail
+      blockinfile:
+        path: /etc/promtail/promtail.yaml
+        insertafter: "__path__: /var/log/*log"
+        block: |
+          - targets:
+              - localhost
+            labels:
+              job: mariadb
+              host: {{ ansible_host }}
+              __path__: /var/log/mysql/*log
+
+    - name: mariadb - Master conf file, server-id etc.
+      shell: |
+        sed -i '/#server-id/ s/^.//' {{ mariadb_config }}
+        sed -i '/#port/ s/^.//' {{ mariadb_config }}   
+        sed -i '/#log_bin/ s/^.//' {{ mariadb_config }}   
+        sed -i '/#general_log_file/ s/^.//' {{ mariadb_config }}
+        sed -i '/#general_log/ s/^.//' {{ mariadb_config }}
+
+    - name: mariadb - Master conf file, binding
+      replace: 
+         path: "{{ mariadb_config }}" 
+         regexp: "^#bind-address.*$"
+         replace: "bind-address = '{{ ansible_host }}'"
+      when: inventory_hostname == primary
+
+    - name: mariadb - Master conf file, binlog ignore
+      replace: 
+         path: "{{ mariadb_config }}" 
+         regexp: "^#binlog_ignore_db.*$"
+         replace: "binlog_ignore_db = information_schema,test,mysql"
+      when: inventory_hostname == primary
+
+    - name: mariadb - Master stop/start mariadb service
+      shell: systemctl restart  mariadb
+      when: inventory_hostname == primary
+
+    - name: mariadb - Master add 1C user  
+      shell: |
+        mysql -u root -e "CREATE USER '{{mariadb_1c_user}}'@'%' IDENTIFIED BY '{{mariadb_1c_password}}';"
+        mysql -u root -e "GRANT ALL PRIVILEGES ON *.* to '{{mariadb_1c_user}}'@'%' IDENTIFIED BY '{{mariadb_1c_password}}';"
+      when: inventory_hostname == primary
+
+    - name: mariadb - Slave create replication user & grant
+      shell: |
+        mysql -u root -e "CREATE USER '{{mariadb_replication_user}}'@'{{item}}' IDENTIFIED BY '{{mariadb_replication_password}}';"
+        mysql -u root -e "GRANT REPLICATION SLAVE ON *.* TO '{{mariadb_replication_user}}'@'{{item}}'";
+        mysql -u root -e "CREATE USER '{{mariadb_1c_user}}'@'{{item}}' IDENTIFIED BY '{{mariadb_1c_password}}';"
+        mysql -u root -e "GRANT ALL PRIVILEGES ON {{mariadb_1c_database}}.* to '{{mariadb_1c_user}}'@'{{item}}' IDENTIFIED BY '{{mariadb_1c_password}}'';"
+        mysql -u root -e "flush privileges;"
+      when: inventory_hostname == primary
+      with_items: '{{ non_master_hosts }}'
+
+### Master - создание БД под задачу, наполнение ее данными
+#
+#  здесь должен быть набор заданий для создания БД и загрузки данных
+    # - name: mariadb - Master copy data dump to it
+    #   copy: 
+    #     src: SW/{{mariadb_1cbitrix_dump}}
+    #     dest: /tmp/{{mariadb_1cbitrix_dump}}
+    #   when: inventory_hostname == primary
+
+    # - name: mariadb - Master import data from dump
+    #   shell:
+    #     mysql -u root -p {{mariadb_database:}} </tmp/{{mariadb_1cbitrix_dump}}
+    #   when: inventory_hostname == primary
+###
+
+    - name: mariadb - Master current bin file to replicate
+      shell: |
+        mysql -u root --skip-column-names -e "show master status;" | awk '{print $1}'
+      when: inventory_hostname == primary
+      register: file_to_replicate
+
+    - name: mariadb - Master current position to replicate  
+      shell: |
+        mysql -u root --skip-column-names -e "show master status;" | awk '{print $2}'
+      when: inventory_hostname == primary
+      register: position_to_replicate
+
+    - name: mariadb - Master make an SQL replication file
+      template: 
+        src: "template/mariadb.replication.sql.j2"
+        dest: ./replicate.sql
+        owner: devops
+        group: devops
+        mode: '0644'
+      when: inventory_hostname == primary 
+    
+    - name: mariadb - Master copy file over to local
+      fetch:
+        src: ./replicate.sql
+        dest: ./replicate.sql
+        flat: yes
+      when: inventory_hostname == primary 
+     
+    - name: mariadb - Master delete sql script
+      file: 
+        path: ./replicate.sql
+        state: absent
+      when: inventory_hostname == primary       
+
+
+### Slave - раскомментируем и меняем параметры конфиг файла
+
+    - name: mariadb - Slave server-id 
+      shell: |
+        sed -i '/#server-id/ s/^.//' {{ mariadb_config }}
+        sed -i '/server-id/ s/1/2/' {{ mariadb_config }}
+      when: inventory_hostname != primary
+
+    - name: mariadb - Slave conf file, binding
+      replace: 
+         path: "{{ mariadb_config }}" 
+         regexp: "^#bind-address.*$"
+         replace: "bind-address = '{{ ansible_host }}'"
+      when: inventory_hostname != primary
+
+    - name: mariadb - Slave stop mariadb service
+      systemd:
+        name: mariadb
+        state: stopped
+      when: inventory_hostname != primary
+
+    - name: mariadb - Slave start mariadb service
+      systemd:
+        name: mariadb
+        state: started
+      when: inventory_hostname != primary
+ 
+    - name: mariadb - Slave get sql script for replication
+      copy:
+        src: ./replicate.sql
+        dest: /tmp/replicate.sql
+      when: inventory_hostname != primary
+
+    - name: mariadb - Slave setup replication
+      shell: 
+        mysql -u root < /tmp/replicate.sql 
+      when: inventory_hostname != primary
+
+    - name: mariadb - Slave delete sql script
+      file: 
+        path: /tmp/replicate.sql
+        state: absent
+      when: inventory_hostname != primary       
+
+# could fail 
+    - name: mariadb - delete replication script locally
+      local_action: file path=./replicate.sql state=absent

@@ -1,0 +1,257 @@
+---
+
+# устанавливаем PostgreSQL на ВМ. по требованию разработчика версия 13.5, 
+# так что из исходников
+
+- hosts: "postgres"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+
+    - name: postgres - All servers add promtail config
+      blockinfile:
+        path: /etc/promtail/promtail.yaml
+        insertafter: "__path__: /var/log/*log"
+        block: |
+          - targets:
+              - localhost
+            labels:
+              job: postgres
+              host: {{ ansible_host }}
+              __path__: {{ postgres_data }}/*logfile*
+
+    - name: postgres - adding necessary packages
+      apt:
+        pkg:
+          - gcc
+          - make
+          - libreadline-dev
+          - libsystemd-dev
+          - zlib1g-dev
+          - libldb-dev
+          - libldap2-dev
+        state: present
+
+    - name: postgres - add postgres user
+      user:
+        name: postgres
+        comment: PostgreSQL user
+        append: yes
+
+    - name: postgres - copy source tarball to VM
+      copy:
+        src: SW/postgresql-13.5.tar.gz
+        dest: /home/devops/postgres.tar.gz
+        owner: devops
+        force: no
+
+    - name: postgres - untar source
+      shell: tar zxvf /home/devops/postgres.tar.gz
+
+    - name: postgres - configure & compile & install
+      shell: |
+        cd /home/devops/postgresql-13.5
+        ./configure --with-ldap --with-systemd
+        make
+        sudo make install
+
+    - name: postgres - removing dev packages
+      apt:
+        pkg:
+          - gcc
+          - make
+          - libreadline-dev
+          - libsystemd-dev
+          - libldb-dev
+          - zlib1g-dev
+          - libldap2-dev
+        state: absent
+
+    - name: postgres - add data dir
+      shell: |
+        mkdir -p {{postgres_data}}
+        chown -R postgres: /usr/local/pgsql
+        chown -R postgres: {{postgres_data}}
+        chmod 750 /usr/local/pgsql
+        echo "export PATH=/usr/local/pgsql/bin:$PATH" >>/etc/profile
+        echo "export PGDATA={{postgres_data}}" >>/etc/profile
+        . /etc/profile
+
+    - name: postgres - initdb and start the DB server
+      shell: |
+        su postgres -c "/usr/local/pgsql/bin/initdb -D /usr/local/pgsql/data"
+        su postgres -c "/usr/local/pgsql/bin/pg_ctl -D /usr/local/pgsql/data -l /usr/local/pgsql/bin/psql_logfile.log start"
+      become: true
+
+    - name: postgres - make service file and run it
+      template:
+        src: "template/postgresql.service.j2"
+        dest: "/etc/systemd/system/postgresql.service"
+
+    - name: postgres - stop the DB server
+      shell: su postgres -c "/usr/local/pgsql/bin/pg_ctl -D /usr/local/pgsql/data -l /usr/local/pgsql/bin/psql_logfile.log stop"
+      become: true
+
+    - name: postgres - start the service
+      systemd: 
+        name: postgresql
+        state: started
+
+    - name: postgres - enable the service
+      shell: systemctl enable postgresql
+      become: true
+
+    - name: postgres - delete all unnecessary things
+      shell: |
+        echo "delete files ..."
+        rm -rf /home/devops/postgres*
+
+  ##
+  ## Hастройки Мастер сервера
+  ##    
+
+    - name: postgres Master - create replication user
+      shell: | 
+        cd "{{ postgres_path }}"
+        ./psql -U postgres -c "create user {{ pg_replication_user }} with password '{{ pg_replication_password }}' replication;"
+        ./psql -U postgres -c "create user {{ tps_ts_user }} with password '{{ tps_ts_password }}' createdb;"
+      become: yes
+      become_user: postgres
+      when: inventory_hostname == primary
+
+    - name: postgres - Master adjust postgresql.conf (listen address)
+      replace: 
+         path: "{{ postgres_config }}" 
+         regexp: "^#listen_addresses.*$"
+         replace: "listen_addresses = 'localhost, {{ ansible_host }}'"
+      when: inventory_hostname == primary
+
+    - name: postgres - Master adjust wal level
+      replace: 
+         path: "{{ postgres_config }}" 
+         regexp: "^#wal_level.*$"
+         replace: "wal_level = replica"
+      when: inventory_hostname == primary
+
+    - name: postgres - Master adjust wal senders
+      replace: 
+         path: "{{ postgres_config }}" 
+         regexp: "^#max_wal_senders.*$"
+         replace: "max_wal_senders = 2"
+      when: inventory_hostname == primary
+
+    - name: postgres - Master adjust max replication slots
+      replace: 
+         path: "{{ postgres_config }}" 
+         regexp: "^#max_replication_slots.*$"
+         replace: "max_replication_slots = 2"
+      when: inventory_hostname == primary
+
+    - name: postgres - Master adjust hot standby
+      shell: |
+        sed -i '/#hot_standby/ s/^.//' {{ postgres_config }}
+        sed -i '/hot_standby_feedback/ s/off/on/' {{ postgres_config }}          
+      when: inventory_hostname == primary
+
+    - name: postgres - Master add auth for replication user (localhost)
+      blockinfile:
+        path: "{{ postgres_hba_config }}" 
+        block: |
+          # TPS-TS config localhost
+          host replication {{pg_replication_user}} 127.0.0.1/32 md5
+      when: inventory_hostname == primary
+
+    - name: postgres - Master add auth for replication user
+      lineinfile:
+        path: "{{ postgres_hba_config }}" 
+        line: host replication {{pg_replication_user}} {{ item }}/32 md5
+      with_items: 
+        - "{{ groups['postgres'] | map('extract',hostvars,['ansible_host']) }}"
+      when: inventory_hostname == primary
+
+    - name: postgres - Master stop postgres service
+      systemd:
+        name: postgresql
+        state: stopped
+      when: inventory_hostname == primary
+
+    - name: postgres - Master start postgres service
+      systemd:
+        name: postgresql
+        state: started
+      when: inventory_hostname == primary
+
+    - name: postgres - Master upload data file (DB)
+      copy: 
+        src: SW/{{tps_ts_data_file}}
+        dest: /home/postgres/{{tps_ts_data_file}}
+        owner: postgres
+        mode: '0644'
+      when: inventory_hostname == primary
+
+    # - name: postgres - Master apply dump file (restore DB)
+    #   shell: |
+    #     pg_restore {{tps_ts_db}} < {{tps_ts_data_file}}
+    #   when: inventory_hostname == primary
+              
+
+###
+### Hастройки Подчиненных серверов БД
+###
+
+    - name: postgres - Slave create user
+      shell: | 
+        cd "{{ postgres_path }}"
+        ./psql -U postgres -c "create user {{ tps_ts_user }} with password '{{ tps_ts_password }}' createdb;"
+      become: yes
+      become_user: postgres
+      when: inventory_hostname != primary
+
+    - name: postgres - Slave adjust postgresql.conf (listen address)
+      replace: 
+         path: "{{ postgres_config }}" 
+         regexp: "^#listen_addresses.*$"
+         replace: "listen_addresses = 'localhost, {{ ansible_host }}'"
+      when: inventory_hostname != primary
+
+    - name: postgres - Slave stop postgres service
+      systemd:
+        name: postgresql
+        state: stopped
+      when: inventory_hostname != primary
+
+    - name: postgres - Slave delete data dir contents
+      shell: |
+        cd {{ postgres_data }}
+        rm -rf *
+      when: inventory_hostname != primary
+
+    - name: postgres - Slave make the .pgpass file
+      template: 
+        src: "template/.pgpass.j2"
+        dest: /home/postgres/.pgpass
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      when: inventory_hostname != primary      
+
+    - name: postgres - Slave start replication
+      shell: | 
+        cd "{{ postgres_path }}"
+        ./pg_basebackup -h {{ primary }} -U {{ pg_replication_user }} -D {{ postgres_data }} --wal-method=stream --write-recovery-conf -w
+      become: yes
+      become_user: postgres
+      when: inventory_hostname != primary
+
+    - name: postgres - Slave start postgres service
+      systemd:
+        name: postgresql
+        state: started
+      when: inventory_hostname != primary

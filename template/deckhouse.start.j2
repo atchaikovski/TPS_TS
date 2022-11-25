@@ -1,0 +1,4 @@
+#!/bin/sh
+#base64 -d <<< QjlMeTU4TWl5TUxIS2FWRXhhNUFWTnd6MW1NRUNRTk4= | 
+docker login -u license-token -p {{deckhouse_token}} registry.deckhouse.io
+docker run -d -it -v "$PWD/config.yml:/config.yml" -v "$HOME/.ssh/:/tmp/.ssh/" registry.deckhouse.io/deckhouse/ee/install:stable bash

@@ -1,0 +1,4 @@
+env.sh
+SW/
+*/.vagrant/
+.DS_Store

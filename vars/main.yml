@@ -1,0 +1,75 @@
+---
+# this is to be changed on implementation... all values are for test only !! 
+
+# general project vars
+sources_repo: 172.17.32.170
+tps_ts_db: mpbr
+tps_ts_user: mpbr
+tps_ts_password: P@sw0rd1
+tps_ts_data_file: mpbr.dump
+sshd_config: /etc/ssh/sshd_config
+containerd_config: /etc/containerd/config.toml
+
+# monitoring & logging
+promtail_bin: promtail-linux-amd64
+loki_host: 10.127.128.80
+loki_data: /var/loki
+loki_bin: loki-linux-amd64
+node_exporter: node_exporter-1.4.0.linux-amd64
+node_exporter_bin: node_exporter
+
+# Active Directory
+# ad_domain: msk.iis.cbr.ru
+ad_domain: alexlab.home
+
+ad_password: SuperSila8*
+ad_user: svcepvv-linux-ldap
+#ad_user: Administrator
+
+# 1C-Bitrix:
+bitrix_sw_version: 1c-bitrix-cluster.zip
+# 8.0.0, 8.1.10, 7.4.30
+php_version: 7.4.30
+php_ini: /etc/php/php{{php_version}}/php.ini
+fpm_user: www-data
+
+# PostgreSQL common: 
+pg_replication_user: svcepvvts_psql_rep
+pg_replication_password: P@sw0rd1
+pg_database: postgres
+pg_port: 5432
+data_disk_name: /dev/sdb
+data_vol_name: postgres
+data_lvol_name: pg01
+
+# PostgreSQL < 14
+postgres_path: /usr/local/pgsql/bin
+postgres_data: /usr/local/pgsql/data
+postgres_config: /usr/local/pgsql/data/postgresql.conf
+postgres_hba_config: /usr/local/pgsql/data/pg_hba.conf
+
+# PostgreSQL 14
+postgres_path14: /usr/bin
+postgres_data14: /data
+postgres_config14: /etc/postgresql/14/main/postgresql.conf
+postgres_hba_config14: /etc/postgresql/14/main/pg_hba.conf
+postgres_default_path14: /var/lib/postgresql/14/main
+
+# Mysql (MariaDB)
+mariadb_config: /etc/mysql/mariadb.conf.d/50-server.cnf
+mariadb_replication_user: repluser
+mariadb_replication_password: P@sw0rd1
+mariadb_database: ""
+mariadb_data_dir: "/var/mariadb/data"
+mariadb_1c_user: sitemanager
+mariadb_1c_password: P@sw0rd1
+mariadb_1c_database: sitemanager
+mariadb_1cbitrix_dump: ""
+
+# Deckhouse
+deckhouse_net_cidr: 192.168.0.0
+k8s_version: '1.20'
+deckhouse_public_domain: "'%s.alexlab.home'"
+deckhouse_config: config.yml
+deckhouse_1st_master: 192.168.0.171
+deckhouse_token: 'B9Ly58MiyMLHKaVExa5AVNwz1mMECQNN'

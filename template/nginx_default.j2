@@ -1,0 +1,32 @@
+##
+# Default server configuration
+#
+server {
+	listen 80 default_server;
+	listen [::]:80 default_server;
+	client_max_body_size 128M;
+	add_header X-Frame-Options "SAMEORIGIN";
+
+	root /var/www/html;
+
+	index index.html index.htm index.nginx-debian.html index.php;
+
+	server_name _;
+
+	location / {
+		# First attempt to serve request as file, then
+		# as directory, then fall back to displaying a 404.
+		try_files $uri $uri/ =404;
+	}
+
+	# pass PHP scripts to FastCGI server
+	#
+	location ~ \.php$ {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass 127.0.0.1:9000;
+		fastcgi_send_timeout 300;
+		fastcgi_read_timeout 300;
+		fastcgi_param   REMOTE_USER       $http_authorization;
+	}
+
+}

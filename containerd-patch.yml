@@ -1,0 +1,26 @@
+---
+
+#
+# добавляем во все перечисленные ВМ строки конфигурации
+# с доп прокси репозиториев 
+# (временная мера? нужно для тестов развертывания ПО 
+# на кластере Deckhouse. дальше вендор обещал постоянный функционал по откл/вкл 
+# работы с внешними репозиториями
+#
+
+- hosts: "workers"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+
+    - name:  include vars
+      include_vars: vars/main.yml
+
+    - name: add lines to the config
+      blockinfile:
+        path: '{{containerd_config}}'

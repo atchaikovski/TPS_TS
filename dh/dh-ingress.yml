@@ -1,0 +1,15 @@
+---
+
+- hosts: "ingress"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+    - name: ingress- execute script
+      shell: |
+        chmod +x front.sh
+        ./front.sh

@@ -1,0 +1,16 @@
+---
+
+- hosts: "system"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+    - name: system- execute script
+      shell: |
+        chmod +x system.sh
+        ./system.sh
+

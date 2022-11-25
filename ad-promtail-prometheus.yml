@@ -1,0 +1,118 @@
+---
+
+#
+# добавляем все перечисленные ВМ в AD
+# устанавливаем агент promtail, настраиваем его на сервер loki
+# устанавливаем node_exporter для prometheus
+#
+
+- hosts: "dbm,bitrix"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+
+    - name:  include vars
+      include_vars: vars/main.yml
+    
+# common tasks
+#    - name: add IPv6 disable to the config
+#      lineinfile:
+#        path: /etc/sysctl.d/999-astra.conf
+#        line: net.ipv6.conf.all.disable_ipv6 = 1
+#        insertafter: EOF
+
+# Promtail
+    - name:  create promtail directory
+      file: 
+        path: /etc/promtail
+        state: directory
+
+    - name:  add promtail user
+      user:
+        name: promtail
+        groups: adm,systemd-journal
+        append: yes
+        system: yes
+
+    - name:  add promtail config
+      template:
+        src: template/promtail.yaml.j2
+        dest: /etc/promtail/promtail.yaml
+
+    - name:  add promtail service
+      template:
+        src: template/promtail.service.j2
+        dest: /etc/systemd/system/promtail.service
+
+    - name:  add promtail binary
+      copy:
+        src: SW/{{promtail_bin}}.zip
+        dest: /tmp/{{promtail_bin}}.zip
+        force: no
+
+    - name:  unzip promtail and copy
+      shell: |
+        cd /tmp
+        unzip {{promtail_bin}}.zip
+        mv {{promtail_bin}} /usr/bin
+        setfacl -R -m u:promtail:rX /var/log
+        groupadd promtail
+        systemctl enable promtail
+        systemctl start promtail
+
+# node_exporter
+    - name: copy node_exporter over to server
+      copy: 
+        src: SW/{{node_exporter}}.tar.gz
+        dest: /tmp/
+        force: no
+
+    - name: add node_exporter user
+      user:
+        name: node_exporter
+        system: no
+        shell: /usr/sbin/nologin
+
+    - name: untar node_exporter and install
+      shell: |
+        cd /tmp
+        tar zxvf {{node_exporter}}.tar.gz
+        cd {{node_exporter}}
+        mv ./node_exporter /usr/bin
+        chown node_exporter:node_exporter /usr/bin/node_exporter
+
+    - name: add node_exporter service
+      template:
+        src: template/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: add node_exporter service
+      template:
+        src: template/node_exporter.web.j2
+        dest: /etc/systemd/system/node_exporter.web.yml
+
+    - name: enable and run node_exporter
+      shell: | 
+        systemctl enable node_exporter.service
+        systemctl start node_exporter.service
+
+# adding node to AD
+#    - name:  add hosts to AD
+#      shell: |
+#        dpkg --configure -a
+#        astra-ad-sssd-client -d {{ ad_domain }} -u {{ ad_user }} -p {{ ad_password }} -y
+#      notify: 
+#        - reboot after joining AD
+
+#  handlers:
+  
+#    - name: reboot after joining AD
+#      reboot:
+#        msg: "==> going to reboot this host due to AD join"
+#        test_command: "uname -a"
+#        reboot_timeout: 140

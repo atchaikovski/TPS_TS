@@ -1,0 +1,57 @@
+---
+
+# инсталлируем Декхаус на ВМ.  
+# !!! для работы должна использоваться отдельная ВМ с установленным на ней докером. 
+# !!! иначе не пройдет инсталляция
+
+
+- hosts: "deckhouse_bootstrap"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    - name: deckhouse - copy the install config
+      template:
+        src: template/deckhouse-config.yml.j2
+        dest: /home/devops/config.yml
+        owner: devops
+        group: devops
+    
+    - name: deckhouse - copy ssh key over
+      copy: 
+        src: ~/.ssh/id_rsa
+        dest: /home/devops/.ssh
+        owner: devops
+        group: devops
+
+    - name: deckhouse - copy the install boot cmd
+      template:
+        src: template/deckhouse.start.j2
+        dest: /home/devops/deckhouse.start
+        owner: devops
+        group: devops
+
+    - name: deckhouse - make start script runnable
+      shell: chmod +x /home/devops/deckhouse.start
+
+    - name: deckhouse - form a file with dhctl command
+      template:
+        src: template/dhctl.txt.j2
+        dest: /home/devops/dhctl.txt
+        owner: devops
+        group: devops
+
+    - name: deckhouse - start the script
+      shell: ./deckhouse.start
+
+    # - name: deckhouse - find out container name
+
+    # - name: deckhouse - attach to this container
+
+    # - name: deckhouse - run the dhctl in it

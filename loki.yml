@@ -1,0 +1,58 @@
+#
+# устанавливает grafana loki на отдельный сервер
+# нужен ли дополнительный внешний диск для ВМ?
+#
+
+- hosts: "loki"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+
+    - name: loki - add loki user
+      user:
+        name: loki
+        comment: Loki logger user
+
+    - name:  loki - create loki directory
+      file: 
+        path: /etc/loki
+        state: directory
+
+    - name:  loki - add loki config
+      template:
+        src: template/config-loki.yaml.j2
+        dest: /etc/loki/config-loki.yaml
+
+    - name:  add loki service
+      template:
+        src: template/loki.service.j2
+        dest: /etc/systemd/system/loki.service
+
+    - name: loki - add loki binary
+      copy:
+        src: SW/{{loki_bin}}.zip
+        dest: /tmp/{{loki_bin}}.zip
+        force: no
+
+    - name: loki - unzip loki and copy
+      shell: |
+        cd /tmp
+        unzip {{loki_bin}}.zip
+        mv {{loki_bin}} /usr/local/bin
+
+    - name: loki - enable and start
+      shell: |
+        systemctl enable loki
+        systemctl start loki
+
+    - name: loki - remove bin after all
+      file:
+        path: /tmp/{{loki_bin}}.zip
+        state: absent

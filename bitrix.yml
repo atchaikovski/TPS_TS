@@ -1,0 +1,177 @@
+---
+
+##
+## подготовка ВМ для 1С-Битрикс. требования разработчика PHP8.0, а так как этой версии
+## нет в стандартном репозитории Астра Линукс, то его приходится собирать из исходных кодов
+## далее идет подключение php-fpm, настройка и затем распаковка 1С-Битрикс.
+## 
+
+- hosts: "bitrix"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+
+    - name: bitrix - copy php-{{php_version}} sources over
+      copy: 
+        src: SW/php-{{php_version}}.tar.gz
+        dest: /home/devops/php-{{php_version}}.tar.gz
+        force: no
+
+    - name: bitrix - prepare for compilation, add packages
+      apt:
+        pkg:
+          - nginx
+          - autoconf 
+          - build-essential  
+          - curl 
+          - libtool 
+          - libssl-dev 
+          - libjpeg-dev
+          - libcurl4-openssl-dev 
+          - libxml2-dev 
+          - libreadline7 
+          - libreadline-dev 
+          - libzip-dev 
+          - libzip4 
+          - openssl 
+          - pkg-config 
+          - zlib1g-dev 
+          - libsqlite3-dev 
+          - sqlite3 
+          - libonig-dev 
+          - libpq-dev 
+          - libpng-dev 
+          - libfreetype6-dev 
+          - libldb-dev 
+          - libldap2-dev
+        state: present
+
+    - name: bitrix - upload conf file
+      template: 
+        src: template/default.j2
+        dest: /etc/nginx/sites-available/default
+
+    - name: bitrix - untar php-{{php_version}} sources 
+      shell: |
+        cd /home/devops
+        tar zxvf php-{{php_version}}.tar.gz
+
+    - name: bitrix - configure for build
+      shell: |
+        cd php-{{php_version}}
+        ./configure --with-config-file-path=/etc/php/php{{php_version}} \
+        --sysconfdir=/etc/php/php{{php_version}} \
+        --enable-mysqlnd \
+        --with-pdo-mysql \
+        --with-pdo-mysql=mysqlnd \
+        --enable-bcmath \
+        --enable-fpm \
+        --with-fpm-user={{fpm_user}} \
+        --with-fpm-group={{fpm_user}} \
+        --with-jpeg \
+        --enable-mbstring \
+        --enable-shmop \
+        --enable-sockets \
+        --enable-sysvmsg \
+        --enable-sysvsem \
+        --enable-sysvshm \
+        --with-zlib \
+        --with-curl \
+        --with-openssl \
+        --enable-pcntl \
+        --with-readline \
+        --with-freetype \
+        --enable-gd \
+        --with-mysqli=mysqlnd \
+        --with-ldap
+    
+    - name: bitrix - make & make install
+      shell: |
+        cd /home/devops/php-{{php_version}}
+        make 
+        make install
+
+    - name: bitrix - remove unnecessary packages
+      apt:
+        pkg:
+          - libssl-dev 
+          - libcurl4-openssl-dev 
+          - libxml2-dev 
+          - libreadline-dev 
+          - libzip-dev 
+          - zlib1g-dev 
+          - libsqlite3-dev 
+          - libonig-dev 
+          - libpq-dev 
+          - libpng-dev 
+          - libfreetype6-dev 
+          - libldb-dev 
+          - libldap2-dev
+          - libjpeg-dev
+        state: absent      
+
+    - name: bitrix - copy configs
+      shell: |
+        cp /home/devops/php-{{php_version}}/php.ini-development /etc/php/php{{php_version}}/php.ini
+        cp /etc/php/php{{php_version}}/php-fpm.conf.default /etc/php/php{{php_version}}/php-fpm.conf
+        cp /etc/php/php{{php_version}}/php-fpm.d/www.conf.default /etc/php/php{{php_version}}/php-fpm.d/www.conf
+
+    - name: bitrix - changes to php.ini
+      shell: |
+        sed -i '/;short_open_tag/ s/^.//' {{ php_ini }}
+        sed -i '/short_open_tag/ s/Off/On/' {{ php_ini }}    
+        sed -i '/;opcache.enabled/ s/^.//' {{ php_ini }}      
+        sed -i '/;opcache.revalidate_freq/ s/^.//' {{ php_ini }}
+        sed -i '/opcache.revalidate_freq/ s/2/0/' {{ php_ini }}          
+        sed -i '/display_errors/ s/On/Off/' {{ php_ini }}          
+        sed -i '/zlib.output_compression/ s/Off/On/' {{ php_ini }}         
+        sed -i '/;zlib.output_compression_level/ s/^.//' {{ php_ini }}          
+        sed -i '/zlib.output_compression_level/ s/-1/6/' {{ php_ini }}
+        sed -i '/;max_input_vars/ s/^.//' {{ php_ini }}          
+        sed -i '/max_input_vars/ s/1000/10000/' {{ php_ini }}
+        sed -i '/upload_max_filesize/ s/2M/20M/' {{ php_ini }}
+        echo "date.timezone = Europe/Moscow" >> {{ php_ini }}
+
+#        echo "mbstring.func_overload = 2" >> {{ php_ini }}
+
+    - name: bitrix - register php-fpm as a service
+      template: 
+        src: template/php-fpm.service.j2
+        dest: /lib/systemd/system/php-{{php_version}}-fpm.service
+
+    - name: bitrix - enable php-fpm service
+      shell: |
+        systemctl enable php-{{php_version}}-fpm.service
+        systemctl daemon-reload
+        systemctl start php-{{php_version}}-fpm.service
+
+##
+## копирование и подготовка к настройке 1С-Битрикс
+##      
+    - name: bitrix - copy Bitrix binary over to the hosts
+      copy: 
+        src: SW/{{bitrix_sw_version}}
+        dest: /var/www/html
+        force: no
+      
+    - name: bitrix - unzip the SW & prepare files
+      shell: |
+        cd /var/www/html
+        unzip -no {{bitrix_sw_version}}
+
+        chown -R www-data: /var/www/html
+        
+    - name: bitrix - delete the archive
+      file: 
+        path: /var/www/html/{{bitrix_sw_version}}
+        state: absent
+
+    - name: bitrix - restart nginx 
+      shell: systemctl restart nginx

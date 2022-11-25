@@ -1,0 +1,21 @@
+[Unit]
+Description=Promtail for Loki
+After=network.target
+
+[Service]
+Type=simple
+User=promtail
+ExecStart=/usr/bin/./promtail-linux-amd64 -config.file /etc/promtail/promtail.yaml
+Restart=on-abort
+NoNewPrivileges=true
+PrivateTmp=yes
+RestrictNamespaces=uts ipc pid user cgroup
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectSystem=strict
+PrivateUsers=strict
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=multi-user.target

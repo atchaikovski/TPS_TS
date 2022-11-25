@@ -1,0 +1,253 @@
+---
+
+# устанавливаем PostgreSQL на ВМ. по требованию разработчика версия 14
+# обязательно включить пункт создания БД!
+# оттуда уже перенаправить журнал в promtail
+# 
+
+- hosts: "postgres"
+  remote_user: devops
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+
+# all PostgreSQL14 VMs
+
+    - name: postgres14 - add group postgres
+      group:
+        name: postgres
+        state: present
+
+    - name: postgres14 - add postgres user
+      user:
+        name: postgres
+        group: postgres
+        comment: PostgreSQL user
+
+    - name: postgres14 - check if data dir is there
+      stat: 
+        path: '{{postgres_data14}}'
+      register: data_dir_check
+
+    - name: postgres14 - create data dir if not there
+      file: 
+        path: '{{postgres_data14}}'
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: 0750
+      when: data_dir_check.stat.exists != true
+
+    - name: 
+      find:
+        paths: '{{postgres_data14}}'
+        file_type: directory
+        hidden: true
+      register: out
+
+    - name: postgres14 - add disk (shell)
+      shell: |
+        pvcreate {{data_disk_name}}
+        vgcreate {{data_vol_name}} {{data_disk_name}}
+        lvcreate -l 100%FREE -n {{data_lvol_name}} {{data_vol_name}} -y
+        mkfs.ext4 /dev/{{data_vol_name}}/{{data_lvol_name}}
+        mount /dev/{{data_vol_name}}/{{data_lvol_name}} {{postgres_data14}}
+        chown -R postgres:postgres {{postgres_data14}}
+      when: out.matched == 0
+
+    - name: postgres14 - add data dir
+      shell: |
+        echo "export PGDATA={{postgres_data14}}" >>/etc/profile
+        . /etc/profile
+
+## check logfile location
+    - name: postgres14 - add promtail config
+      blockinfile:
+        path: /etc/promtail/promtail.yaml
+        insertafter: "__path__: /var/log/*log"
+        block: |
+            - targets:
+                - localhost
+              labels:
+                job: postgres
+                host: {{ ansible_host }}
+                __path__: {{ postgres_data14 }}/main/*logfile*
+            - targets:
+                - localhost
+              labels:
+                job: postgres
+                host: {{ ansible_host }}
+                __path__: {{ postgres_data14 }}/{{tps_ts_db}}/*logfile*
+            
+    - name: postgres14 - add package from extended repo (v 14)
+      apt: 
+        pkg: postgresql-14
+        state: present
+
+    - name: postgres14 - init the DB at new location 
+      shell: |
+         mkdir {{postgres_data14}}/main
+         /usr/lib/postgresql/14/bin/initdb -D {{postgres_data14}}/main
+      become_user: postgres
+
+    - name: postgres14 - stop service
+      systemd:
+        name: postgresql
+        state: stopped
+
+    - name: postgres14 - modify {{postgres_hba_config14}}
+      shell: |
+        sed -i '/^local/s/peer/trust/' /etc/postgresql/14/main/pg_hba.conf
+        sed -i '/^host/s/ident/md5/' /etc/postgresql/14/main/pg_hba.conf
+
+    - name: postgres14 - add access from other hosts
+      lineinfile:   
+        path: "{{postgres_hba_config14}}"
+        line: "host    all             all             0.0.0.0/24              md5"
+        insertafter: "# IPv4 local connections:"
+
+    - name: postgres14 - adjust data location
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^data_directory.*$"
+         replace: "data_directory = '{{ postgres_data14 }}/main'"
+
+    - name: postgres14 - start service
+      systemd:
+        name: postgresql
+        state: started
+    
+    - name: postgres14 - create user
+      shell: | 
+        cd "{{ postgres_path14 }}"
+        ./psql postgres -tXAc "SELECT 1 FROM pg_roles WHERE rolname='{{tps_ts_user}}'" | grep -q 1 || ./psql -U postgres -c "create user {{ tps_ts_user }} with password '{{ tps_ts_password }}' createdb;"
+      become: yes
+      become_user: postgres
+
+# PostgreSQL 14 Master
+    - name: postgres14 - Master adjust postgresql.conf (listen address)
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^#listen_addresses.*$"
+         replace: "listen_addresses = 'localhost, {{ ansible_host }}'"
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master create replication user
+      shell: | 
+        cd "{{ postgres_path14 }}"
+        ./psql postgres -tXAc "SELECT 1 FROM pg_roles WHERE rolname='{{pg_replication_user}}'" | grep -q 1 || ./psql -U postgres -c "create user {{ pg_replication_user }} with password '{{ pg_replication_password }}' replication;"
+      become: yes
+      become_user: postgres
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master adjust wal level
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^#wal_level.*$"
+         replace: "wal_level = replica"
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master adjust wal senders
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^#max_wal_senders.*$"
+         replace: "max_wal_senders = 2"
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master adjust max replication slots
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^#max_replication_slots.*$"
+         replace: "max_replication_slots = 2"
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master add auth for replication user (localhost)
+      blockinfile:
+        path: "{{ postgres_hba_config14 }}" 
+        block: |
+          # config localhost
+          host replication {{ pg_replication_user }} 127.0.0.1/32 md5
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master add auth for replication user
+      lineinfile:
+        path: "{{ postgres_hba_config14 }}" 
+        line: host replication {{pg_replication_user}} {{ item }}/32 md5
+      with_items: 
+        - "{{ groups['postgres'] | map('extract',hostvars,['ansible_host']) }}"
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master stop postgres service
+      systemd:
+        name: postgresql
+        state: stopped
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master start postgres service
+      systemd:
+        name: postgresql
+        state: started
+      when: inventory_hostname == primary
+
+    - name: postgres14 - Master upload data file (DB)
+      copy: 
+        src: SW/{{tps_ts_data_file}}
+        dest: /tmp/{{tps_ts_data_file}}
+        owner: postgres
+        mode: '0644'
+      when: inventory_hostname == primary
+
+    # - name: postgres14 - Master apply dump file (restore DB)
+    #   shell: pg_restore -d {{tps_ts_db}} < {{tps_ts_data_file}}
+    #   when: inventory_hostname == primary
+
+# PostgreSQL 14 Slave
+
+    - name: postgres14 - Slave adjust postgresql.conf (listen address)
+      replace: 
+         path: "{{ postgres_config14 }}" 
+         regexp: "^#listen_addresses.*$"
+         replace: "listen_addresses = 'localhost, {{ ansible_host }}'"
+      when: inventory_hostname != primary
+
+    - name: postgres14 - Slave stop postgres service
+      systemd:
+        name: postgresql
+        state: stopped
+      when: inventory_hostname != primary
+
+    - name: postgres14 - Slave delete data dir contents
+      shell: |
+        cd {{ postgres_data14 }}/{{tps_ts_db}}
+        rm -rf *
+      when: inventory_hostname != primary
+
+    - name: postgres14 - Slave make the .pgpass file
+      template: 
+        src: "template/.pgpass.j2"
+        dest: /tmp/.pgpass
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      when: inventory_hostname != primary      
+
+## --> password?
+    - name: postgres14 - Slave start replication
+      shell: | 
+        cd "{{ postgres_path14 }}"
+        ./pg_basebackup -h {{ primary }} -U {{ pg_replication_user }} -D {{ postgres_data14 }}/{{tps_ts_db}} --wal-method=stream --write-recovery-conf -w
+      become: yes
+      become_user: postgres
+      when: inventory_hostname != primary
+
+    - name: postgres14 - Slave start postgres service
+      systemd:
+        name: postgresql
+        state: started
+      when: inventory_hostname != primary
