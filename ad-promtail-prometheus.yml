@@ -6,7 +6,7 @@
 # устанавливаем node_exporter для prometheus
 #
 
-- hosts: "dbm,bitrix"
+- hosts: "db,bitrix"
   remote_user: devops
   become: yes
   become_method: sudo
